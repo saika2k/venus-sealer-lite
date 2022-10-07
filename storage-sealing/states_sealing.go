@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"strings"
 	"time"
@@ -918,6 +919,11 @@ func (m *Sealing) handleCommitWait(ctx statemachine.Context, sector types.Sector
 	}
 	if si == nil {
 		return ctx.Send(SectorCommitFailed{xerrors.Errorf("proof validation failed, sector not found in sector set after cron")})
+	}
+
+	//used for the controller to create the register message.
+	if sector.LastErr == "INCREMENT" {
+		fmt.Printf("%s\n %v\n", sector.CommitMessage, sector.SectorNumber)
 	}
 
 	return ctx.Send(SectorProving{})

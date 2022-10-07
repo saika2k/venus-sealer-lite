@@ -104,6 +104,7 @@ func (m *Manager) CheckProvable(ctx context.Context, pp abi.RegisteredPoStProof,
 				}
 			}
 
+			// when this function called by wdpost scheduler, rg is nil, so the following parts do not need to be changed.
 			if rg != nil {
 				wpp, err := sector.ProofType.RegisteredWindowPoStProof()
 				if err != nil {

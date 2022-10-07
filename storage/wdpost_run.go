@@ -14,7 +14,7 @@ import (
 	"github.com/filecoin-project/go-state-types/network"
 	"github.com/filecoin-project/specs-storage/storage"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
+	//"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
 	proof7 "github.com/filecoin-project/specs-actors/v7/actors/runtime/proof"
 
 	"go.opencensus.io/trace"
@@ -209,14 +209,22 @@ func (s *WindowPoStScheduler) checkSectors(ctx context.Context, check bitfield.B
 	sectors := make(map[abi.SectorNumber]struct{})
 	var tocheck []storage.SectorRef
 	for _, info := range sectorInfos {
-		sectors[info.SectorNumber] = struct{}{}
-		tocheck = append(tocheck, storage.SectorRef{
-			ProofType: info.SealProof,
-			ID: abi.SectorID{
-				Miner:  abi.ActorID(mid),
-				Number: info.SectorNumber,
-			},
-		})
+		sectorPerCommitInfo, err := s.api.StateSectorPreCommitInfo(ctx, s.actor, info.SectorNumber, tsk)
+		if err != nil {
+			return bitfield.BitField{}, err
+		}
+		if sectorPerCommitInfo.Info.ReplaceCapacity == false {
+			delete(sectors, info.SectorNumber)
+		} else {
+			sectors[info.SectorNumber] = struct{}{}
+			tocheck = append(tocheck, storage.SectorRef{
+				ProofType: info.SealProof,
+				ID: abi.SectorID{
+					Miner:  abi.ActorID(mid),
+					Number: info.SectorNumber,
+				},
+			})
+		}
 	}
 
 	bad, err := s.faultTracker.CheckProvable(ctx, s.proofType, tocheck, nil)
@@ -521,6 +529,9 @@ func (s *WindowPoStScheduler) asyncFaultRecover(di dline.Info, ts *types.TipSet)
 //     don't exceed message capacity.
 //
 // When `manual` is set, no messages (fault/recover) will be automatically sent
+//
+// Now, the increment is recorded in the precommit onchain messages, so we now need to skip the
+// sectors which store the file increments. Also, the algorithm of the WindowPoSt need to be changed.
 func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di dline.Info, ts *types.TipSet) ([]miner.SubmitWindowedPoStParams, error) {
 	ctx, span := trace.StartSpan(ctx, "storage.runPoStCycle")
 	defer span.End()
@@ -571,6 +582,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 
 	// Generate proofs in batches
 	posts := make([]miner.SubmitWindowedPoStParams, 0, len(partitionBatches))
+	var sectorinfos []proof7.ExtendedSectorInfo
 	for batchIdx, batch := range partitionBatches {
 		batchPartitionStartIdx := 0
 		for _, batch := range partitionBatches[:batchIdx] {
@@ -587,6 +599,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 		somethingToProve := false
 
 		// Retry until we run out of sectors to prove.
+		// this is the large cycle to generate PoSt
 		for retries := 0; ; retries++ {
 			skipCount := uint64(0)
 			var partitions []miner.PoStPartition
@@ -602,11 +615,13 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 					// if they are not declared as recovering.
 					toProve = partition.LiveSectors
 				}
+				// the toProve sectors now is the live sectors and recovered sectors.
 				toProve, err = bitfield.MergeBitFields(toProve, partition.RecoveringSectors)
 				if err != nil {
 					return nil, xerrors.Errorf("adding recoveries to set of sectors to prove: %w", err)
 				}
-
+				// in this function, we want to figure out which sector is good to prove, that means,
+				// the sectors contain file increments need to be excluded from the good.
 				good, err := s.checkSectors(ctx, toProve, ts.Key())
 				if err != nil {
 					return nil, xerrors.Errorf("checking sectors to skip: %w", err)
@@ -638,7 +653,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 					continue
 				}
 
-				xsinfos = append(xsinfos, ssi...)    
+				xsinfos = append(xsinfos, ssi...)
 				partitions = append(partitions, miner.PoStPartition{
 					Index:   uint64(batchPartitionStartIdx + partIdx),
 					Skipped: skipped,
@@ -694,7 +709,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 				}
 
 				// If we generated an incorrect proof, try again.
-				sinfos := make([]proof7.SectorInfo, len(xsinfos))
+				/*sinfos := make([]proof7.SectorInfo, len(xsinfos))
 				for i, xsi := range xsinfos {
 					sinfos[i] = proof7.SectorInfo{
 						SealProof:    xsi.SealProof,
@@ -714,12 +729,15 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 				} else if !correct {
 					log.Errorw("generated incorrect window post proof", "post", postOut, "error", err)
 					continue
-				}
+				}*/
 
 				// Proof generation successful, stop retrying
 				somethingToProve = true
 				params.Partitions = partitions
 				params.Proofs = postOut
+
+				sectorinfos = append(sectorinfos, xsinfos...)
+
 				break
 			}
 
@@ -811,13 +829,13 @@ func (s *WindowPoStScheduler) sectorsForProof(ctx context.Context, goodSectors, 
 	if len(sset) == 0 {
 		return nil, nil
 	}
-    // this is the pad.
+	// this is the pad.
 	substitute := proof7.ExtendedSectorInfo{
 		SectorNumber: sset[0].SectorNumber,
 		SealedCID:    sset[0].SealedCID,
 		SealProof:    sset[0].SealProof,
 		SectorKey:    sset[0].SectorKeyCID,
-	}          
+	}
 
 	sectorByID := make(map[uint64]proof7.ExtendedSectorInfo, len(sset))
 	for _, sector := range sset {
@@ -834,7 +852,7 @@ func (s *WindowPoStScheduler) sectorsForProof(ctx context.Context, goodSectors, 
 		if info, found := sectorByID[sectorNo]; found {
 			proofSectors = append(proofSectors, info)
 		} else {
-			proofSectors = append(proofSectors, substitute)   //always pad to the expected batch size.
+			proofSectors = append(proofSectors, substitute) //always pad to the expected batch size.
 		}
 		return nil
 	}); err != nil {
@@ -861,8 +879,8 @@ func (s *WindowPoStScheduler) submitPoStMessage(ctx context.Context, proof *mine
 	msg := &types.Message{
 		To:     s.actor,
 		Method: builtin.MethodsMiner.SubmitWindowedPoSt,
-		Params: enc,
-		Value:  types.NewInt(0),
+		Params: enc,             // serialized perameters in the method
+		Value:  types.NewInt(0), // used for the balance change
 	}
 	spec := &types.MessageSendSpec{MaxFee: abi.TokenAmount(s.feeCfg.MaxWindowPoStGasFee)}
 
