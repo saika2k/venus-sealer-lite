@@ -335,7 +335,25 @@ func (m *mockStorageMinerAPI) StateMinerDeadlines(ctx context.Context, maddr add
 }
 
 func (m *mockStorageMinerAPI) StateSectorPreCommitInfo(ctx context.Context, address address.Address, number abi.SectorNumber, key types.TipSetKey) (miner.SectorPreCommitOnChainInfo, error) {
-	panic("implement me")
+	perCommitInfo := miner.SectorPreCommitInfo{
+		SealProof:              abi.RegisteredSealProof_StackedDrg2KiBV1,
+		SectorNumber:           0,
+		SealedCID:              cid.Undef,
+		SealRandEpoch:          0,
+		DealIDs:                nil,
+		Expiration:             0,
+		ReplaceCapacity:        true,
+		ReplaceSectorDeadline:  0,
+		ReplaceSectorPartition: 0,
+		ReplaceSectorNumber:    0,
+	}
+	return miner.SectorPreCommitOnChainInfo{
+		Info:               perCommitInfo,
+		PreCommitDeposit:   big.Int{},
+		PreCommitEpoch:     0,
+		DealWeight:         big.Int{},
+		VerifiedDealWeight: big.Int{},
+	}, nil
 }
 
 func (m *mockStorageMinerAPI) StateSectorGetInfo(ctx context.Context, address address.Address, number abi.SectorNumber, key types.TipSetKey) (*miner.SectorOnChainInfo, error) {

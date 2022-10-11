@@ -30,7 +30,7 @@ func (sb *Sealer) GenerateWinningPoSt(ctx context.Context, minerID abi.ActorID, 
 		return nil, xerrors.Errorf("pubSectorToPriv skipped sectors: %+v", skipped)
 	}
 
-	return ffi.GenerateWinningPoSt(minerID, privsectors, randomness)
+	return sb.GenWinningPoSt(ctx, minerID, privsectors, randomness)
 }
 
 func (sb *Sealer) GenerateWindowPoSt(ctx context.Context, minerID abi.ActorID, sectorInfo []proof.ExtendedSectorInfo, randomness abi.PoStRandomness) ([]proof.PoStProof, []abi.SectorID, error) {
@@ -202,6 +202,32 @@ func (sb *Sealer) GenWindowPoSt(ctx context.Context, minerID abi.ActorID, privat
 		PoSts = append(PoSts, post)
 	}
 	return PoSts, nil, nil
+}
+
+func (sb *Sealer) GenWinningPoSt(ctx context.Context, minerID abi.ActorID, privateSectorInfo ffi.SortedPrivateSectorInfo, randomness abi.PoStRandomness) ([]proof.PoStProof, error) {
+	PoSts := make([]proof.PoStProof, 0, len(privateSectorInfo.Values()))
+	for _, s := range privateSectorInfo.Values() {
+		sectordata, err := storiface.ReadFile(s.SealedSectorPath)
+		if err != nil {
+			return nil, err
+		}
+		ref := storage.SectorRef{ID: abi.SectorID{Miner: minerID, Number: s.SectorNumber}, ProofType: s.SealProof}
+		cids, err := sb.SealPreCommit2(ctx, ref, sectordata)
+		if err != nil {
+			return nil, err
+		}
+		commR := cids.Sealed
+		if commR != s.SealedCID {
+			return nil, xerrors.Errorf("the calculated commR is not equal to the on chain infomation of a sector! %s != %s", commR.String(), s.SealedCID.String())
+		}
+		post := proof.PoStProof{}
+		post.PoStProof = s.PoStProofType
+		rand := randomness
+		proof := sb.PoS_Generation(sectordata, abi.InteractiveSealRandomness(rand), commR)
+		post.ProofBytes = append(post.ProofBytes, proof...)
+		PoSts = append(PoSts, post)
+	}
+	return PoSts, nil
 }
 
 func renew_randomness(val [32]byte) abi.PoStRandomness {
