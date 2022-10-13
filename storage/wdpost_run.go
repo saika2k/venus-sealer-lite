@@ -998,17 +998,67 @@ func (s *WindowPoStScheduler) ComputePoSt(ctx context.Context, dlIdx uint64, ts 
 		return nil, xerrors.Errorf("getting deadline: %w", err)
 	}
 	curIdx := dl.Index
-	dl.Index = dlIdx
+	/*dl.Index = dlIdx
 	dlDiff := dl.Index - curIdx
 	if dl.Index > curIdx {
 		dlDiff -= dl.WPoStPeriodDeadlines
 		dl.PeriodStart -= dl.WPoStProvingPeriod
-	}
+	}*/
 
-	epochDiff := (dl.WPoStProvingPeriod / abi.ChainEpoch(dl.WPoStPeriodDeadlines)) * abi.ChainEpoch(dlDiff)
+	epochDiff := (dl.WPoStProvingPeriod / abi.ChainEpoch(dl.WPoStPeriodDeadlines)) * abi.ChainEpoch(curIdx)
 
 	// runPoStCycle only needs dl.Index and dl.Challenge
 	dl.Challenge += epochDiff
 
-	return s.runPoStCycle(ctx, true, *dl, ts)
+	post := make([]miner.SubmitWindowedPoStParams, 0, 1)
+	ctx, span := trace.StartSpan(ctx, "storage.runPoStCycle")
+	defer span.End()
+
+	buf := new(bytes.Buffer)
+	if err := s.actor.MarshalCBOR(buf); err != nil {
+		return nil, xerrors.Errorf("failed to marshal address to cbor: %w", err)
+	}
+
+	headTs, err := s.api.ChainHead(ctx)
+	if err != nil {
+		return nil, xerrors.Errorf("getting current head: %w", err)
+	}
+
+	rand, err := s.api.StateGetRandomnessFromBeacon(ctx, crypto.DomainSeparationTag_WindowedPoStChallengeSeed, dl.Challenge, buf.Bytes(), headTs.Key())
+	if err != nil {
+		return nil, xerrors.Errorf("failed to get chain randomness from beacon for window post (ts=%d; deadline=%d): %w", ts.Height(), dl, err)
+	}
+
+	sectorPerCommitInfo, err := s.api.StateSectorPreCommitInfo(ctx, s.actor, abi.SectorNumber(dlIdx), ts.Key())
+
+	var xsinfos []proof7.ExtendedSectorInfo
+
+	sinfo := proof7.ExtendedSectorInfo{
+		SealProof:    sectorPerCommitInfo.Info.SealProof,
+		SectorNumber: sectorPerCommitInfo.Info.SectorNumber,
+		SealedCID:    sectorPerCommitInfo.Info.SealedCID,
+		SectorKey:    &sectorPerCommitInfo.Info.SealedCID,
+	}
+	xsinfos = append(xsinfos, sinfo)
+
+	mid, err := address.IDFromAddress(s.actor)
+	if err != nil {
+		return nil, err
+	}
+
+	postOut, _, err := s.prover.GenerateWindowPoSt(ctx, abi.ActorID(mid), xsinfos, append(abi.PoStRandomness{}, rand...))
+
+	if err != nil {
+		return nil, err
+	}
+
+	params := miner.SubmitWindowedPoStParams{
+		Deadline:   dl.Index,
+		Partitions: nil,
+		Proofs:     postOut,
+	}
+
+	post = append(post, params)
+
+	return post, nil
 }

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	//"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -721,7 +721,7 @@ var provingComputeCmd = &cli.Command{
 	},
 }
 
-var provingComputeWindowPoStCmd = &cli.Command{
+/*var provingComputeWindowPoStCmd = &cli.Command{
 	Name:  "window-post",
 	Usage: "Compute WindowPoSt for a specific deadline",
 	Description: `Note: This command is intended to be used to verify PoSt compute performance.
@@ -757,6 +757,43 @@ It will not send any messages to the chain.`,
 		}
 		fmt.Println(string(jr))
 
+		return nil
+	},
+}*/
+
+var provingComputeWindowPoStCmd = &cli.Command{
+	Name:  "window-post",
+	Usage: "Compute WindowPoSt for a specific sector",
+	Description: `Note: This command is intended to be used to compute PoSt for sectors with file increment.
+It will provide PoSt message to the controller.`,
+	ArgsUsage: "[sector number]",
+	Action: func(cctx *cli.Context) error {
+		if cctx.Args().Len() != 1 {
+			return xerrors.Errorf("must provide sector number")
+		}
+
+		dlIdx, err := strconv.ParseUint(cctx.Args().Get(0), 10, 64)
+		if err != nil {
+			return xerrors.Errorf("could not parse sector number: %w", err)
+		}
+
+		storageAPI, scloser, err := api.GetStorageMinerAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer scloser()
+
+		ctx := cctx.Context
+
+		start := time.Now()
+		res, err := storageAPI.ComputeWindowPoSt(ctx, dlIdx, types.EmptyTSK)
+		fmt.Printf("Compute Window PoSt called, Took %s\n", time.Now().Sub(start))
+		if err != nil {
+			return err
+		}
+
+		post_proof := res[0].Proofs[0].ProofBytes
+		fmt.Printf("COMPUTE POST PROOF: %v\n", post_proof)
 		return nil
 	},
 }
