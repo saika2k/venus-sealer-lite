@@ -180,6 +180,7 @@ func (sb *Sealer) GenWindowPoSt(ctx context.Context, minerID abi.ActorID, privat
 			return nil, nil, err
 		}
 		ref := storage.SectorRef{ID: abi.SectorID{Miner: minerID, Number: s.SectorNumber}, ProofType: s.SealProof}
+		//pc1o, err := sb.SealPreCommit1()
 		cids, err := sb.SealPreCommit2(ctx, ref, sectordata)
 		if err != nil {
 			return nil, nil, err
@@ -192,7 +193,7 @@ func (sb *Sealer) GenWindowPoSt(ctx context.Context, minerID abi.ActorID, privat
 		post.PoStProof = s.PoStProofType
 		rand := randomness
 		for i := 0; i < 10; i++ {
-			proof := sb.PoS_Generation(sectordata, abi.InteractiveSealRandomness(rand), commR)
+			proof := PoS_Generation(sectordata, abi.InteractiveSealRandomness(rand), commR)
 			if i == 9 {
 				post.ProofBytes = append(post.ProofBytes, proof...)
 			}
@@ -223,7 +224,7 @@ func (sb *Sealer) GenWinningPoSt(ctx context.Context, minerID abi.ActorID, priva
 		post := proof.PoStProof{}
 		post.PoStProof = s.PoStProofType
 		rand := randomness
-		proof := sb.PoS_Generation(sectordata, abi.InteractiveSealRandomness(rand), commR)
+		proof := PoS_Generation(sectordata, abi.InteractiveSealRandomness(rand), commR)
 		post.ProofBytes = append(post.ProofBytes, proof...)
 		PoSts = append(PoSts, post)
 	}

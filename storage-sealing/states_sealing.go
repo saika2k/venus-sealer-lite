@@ -3,8 +3,10 @@ package sealing
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"strings"
 	"time"
@@ -34,6 +36,11 @@ import (
 	"github.com/filecoin-project/venus-sealer/sector-storage/storiface"
 	"github.com/filecoin-project/venus-sealer/types"
 )
+
+type Node2 struct {
+	value []byte
+	tag   bool
+}
 
 func (m *Sealing) handlePacking(ctx statemachine.Context, sector types.SectorInfo) error {
 	m.inputLk.Lock()
@@ -731,7 +738,7 @@ func (m *Sealing) handleCommitting(ctx statemachine.Context, sector types.Sector
 		return ctx.Send(SectorComputeProofFailed{xerrors.Errorf("computing seal proof failed(2): %w", err)})
 	}*/
 
-	proof := m.sealer.PoS_Generation(sector.PreCommit1Out, sector.SeedValue, *sector.CommR)
+	proof := PoS_Generation(sector.PreCommit1Out, sector.SeedValue, *sector.CommR)
 
 	if proof == nil {
 		return ctx.Send(SectorComputeProofFailed{})
@@ -758,6 +765,87 @@ func (m *Sealing) handleCommitting(ctx statemachine.Context, sector types.Sector
 	return ctx.Send(SectorCommitted{
 		Proof: proof,
 	})
+}
+
+func PoS_Generation(phase1Out storage.PreCommit1Out, seed abi.InteractiveSealRandomness, root cid.Cid) []byte {
+	var leafs []*Node2
+	proof := []byte{}
+
+	reader := bytes.NewReader(phase1Out)
+
+	for {
+		buf := make([]byte, 32)
+		n, err := reader.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			} else {
+				return nil
+			}
+		}
+		file_data := buf[:n]
+		leafs = append(leafs, &Node2{value: file_data, tag: false})
+	}
+	chal := gen_challenge(seed, len(leafs))
+
+	leafs[chal].tag = true
+	proof = append(proof, leafs[chal].value...)
+
+	for len(leafs) > 1 {
+		tmp := []*Node2{}
+		for len(leafs) >= 1 {
+			value0 := leafs[0]
+			leafs = leafs[1:]
+			if len(leafs) > 0 {
+				value1 := leafs[0]
+				leafs = leafs[1:]
+				rawdata := XOR(value0.value, value1.value)
+				hash := sha256.Sum256(rawdata)
+				if value0.tag == true {
+					tmp = append(tmp, &Node2{value: hash[:], tag: true})
+					proof = append(proof, value1.value...)
+				} else if value1.tag == true {
+					tmp = append(tmp, &Node2{value: hash[:], tag: true})
+					proof = append(proof, value0.value...)
+				} else {
+					tmp = append(tmp, &Node2{value: hash[:], tag: false})
+				}
+			} else {
+				tmp = append(tmp, value0)
+			}
+			leafs = tmp
+		}
+	}
+
+	root_tmp := leafs[0].value
+	CID, err := cid.Cast(root_tmp)
+	if err != nil || CID != root {
+		return nil
+	}
+
+	return proof
+}
+
+func gen_challenge(seed abi.InteractiveSealRandomness, leng int) uint32 {
+	length := len(seed)
+	var chal uint32
+	for i := 0; i < length; i++ {
+		chal += uint32(seed[i])
+	}
+	chal = chal % uint32(leng)
+	return chal
+}
+
+func XOR(value0, value1 []byte) []byte {
+	length := len(value0)
+	result := make([]byte, length)
+	for i := 0; i < length; i++ {
+		i0 := uint8(value0[i])
+		i1 := uint8(value1[i])
+		tmp := i0 ^ i1
+		result[i] = byte(tmp)
+	}
+	return result
 }
 
 func (m *Sealing) handleSubmitCommit(ctx statemachine.Context, sector types.SectorInfo) error {

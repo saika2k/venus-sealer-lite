@@ -458,10 +458,6 @@ func (m *Manager) SealPreCommit2(ctx context.Context, sector storage.SectorRef, 
 	return out, waitErr
 }
 
-func (m *Manager) PoS_Generation(phase1Out storage.PreCommit1Out, seed abi.InteractiveSealRandomness, root cid.Cid) []byte {
-	return nil
-}
-
 func (m *Manager) SealCommit1(ctx context.Context, sector storage.SectorRef, ticket abi.SealRandomness, seed abi.InteractiveSealRandomness, pieces []abi.PieceInfo, cids storage.SectorCids) (out storage.Commit1Out, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

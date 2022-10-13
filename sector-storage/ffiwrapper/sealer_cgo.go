@@ -7,7 +7,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+
+	//"encoding/json"
 	"io"
 	"math/bits"
 	"os"
@@ -733,15 +734,16 @@ func (sb *Sealer) SealPreCommit1(ctx context.Context, sector storage.SectorRef, 
 
 	p1o, err := storiface.ReadFile(paths.Unsealed)
 
-	p1odec := map[string]interface{}{}
+	//p1odec := map[string]interface{}{}
 	/*if err := json.Unmarshal(p1o, &p1odec); err != nil {
 		return nil, xerrors.Errorf("unmarshaling pc1 output: %w", err)
 	}*/
 
-	p1odec["_venus_SealData"] = p1o
+	/*p1odec["_venus_SealData"] = p1o
 	p1odec["_venus_SealRandomness"] = ticket
 
-	return json.Marshal(&p1odec)
+	return json.Marshal(&p1odec)*/
+	return p1o, nil
 }
 
 var PC2CheckRounds = 3
@@ -903,7 +905,7 @@ func (sb *Sealer) SealCommit2(ctx context.Context, sector storage.SectorRef, pha
 	return ffi.SealCommitPhase2(phase1Out, sector.ID.Number, sector.ID.Miner)
 }
 
-func (sb *Sealer) PoS_Generation(phase1Out storage.PreCommit1Out, seed abi.InteractiveSealRandomness, root cid.Cid) []byte {
+func PoS_Generation(phase1Out storage.PreCommit1Out, seed abi.InteractiveSealRandomness, root cid.Cid) []byte {
 	var leafs []*Node2
 	proof := []byte{}
 
